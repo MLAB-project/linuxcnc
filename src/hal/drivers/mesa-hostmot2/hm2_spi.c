@@ -248,7 +248,7 @@ static int read_ident(hm2_spi_t *board, char *ident) {
 }
 
 static int probe(char *dev, int rate) {
-    printf("probe %d\n", rate);
+    printf("probing device %s with rate %d Hz\n", dev, rate);
     if(nboards >= MAX_BOARDS) return -ENOSPC;
 
     hm2_spi_t *board = &boards[nboards];
