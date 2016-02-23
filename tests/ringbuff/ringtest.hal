@@ -1,0 +1,15 @@
+# components
+loadrt threads name2=servo-thread period2=1000000 
+loadrt ringbuff count=2
+loadrt ringtest
+# pin aliases
+# param aliases
+# parameter values
+# signals
+# nets
+
+# realtime thread/function links
+addf ringbuff.0 servo-thread
+addf ringbuff.1 servo-thread
+addf ringtest.0 servo-thread
+

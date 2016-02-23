@@ -1,0 +1,195 @@
+component ringbuff "A ring buffer";
+author "Matt Wortley";
+license "GPLv2 or later";
+description """This component creates and manages ring buffers.  It was created to support a generic serial peripheral interface (SPI) driver
+called spibus.comp.  The buffers can only be used with components that implement function calls to access the buffers.  The current list of functions that use this are: spiclient.comp, stml6480.comp, max7219ds.comp, and spibus.comp.  The pin handle should be connected to the respective pin on each component it serves.  Example net rb1 ringbuff.0.handle spiclient.out-handle. net rb1 spibus.0.in-handle  net rb2 ringbuff.1.handle spiclient.0.in-handle net rb2 spibus.0.out-handle.  The handle contains a number that just makes sure that a buffer is actually connected and that the buffer id exists before the component starts making calls to functions that could be doing nothing.  It makes the configuration of the components easily accessible to the integrator."""; 
+
+
+pin out unsigned handle "Connect me to BOTH the in-handle and out-handle of others ";
+
+variable unsigned ring [32];
+variable int pptr; // producer pointer - the first empty slot in the ring buffer
+variable int cptr; // consumer pointer - the last slot written out of the ring buffer
+variable unsigned thering [32]; 
+variable unsigned state=0; // state of the buffer machine
+
+function _ nofp;
+;;
+
+#define SPIBUFFSZ 32
+int writeable_slots(int i, int o);
+int readable_slots(int i, int o);
+int ringbuff_index_ptr(int q);
+int get_my_handle_number(struct __comp_state * __comp_inst);
+struct __comp_state* get_inst_ptr(int n);
+
+
+#ifndef __RINGBUFF_H
+#define __RINGBUFF_H
+int hal_ringbuff_put(int bhandle, unsigned char byte);
+int hal_ringbuff_get(int bhandle);
+int hal_ringbuff_free_count(int bhandle);
+int hal_ringbuff_full_count(int bhandle);
+#endif
+
+FUNCTION(_) {
+  if(state==0) {
+    handle=get_my_handle_number(__comp_inst);
+    state=1;
+  }
+} // End function
+
+/* 
+** get_my_handle_number
+** returns the index of the handle that matches the current component (comp inst+1) 
+*/
+int get_my_handle_number(struct __comp_state * __comp_inst)
+{
+  int i=1;
+  int keepGoing=1;
+  struct __comp_state* inst_ptr=0;
+  inst_ptr=__comp_first_inst;
+  while(keepGoing)
+  {
+    if(inst_ptr==__comp_inst) return i;
+    if(inst_ptr==__comp_last_inst) return 0;
+    if(inst_ptr->_next==0) return 0;
+    inst_ptr=inst_ptr->_next;
+    i=i+1;
+  } 
+  return 0;
+}
+
+
+/*
+** get_inst_ptr
+** returns a pointer to the instance of interest
+** traverses list of all ring buffers until it gets to 
+** buffer n, then returns a pointer.  Returns 0 if it 
+** cannot get to the instance requested.
+*/
+struct __comp_state* get_inst_ptr(int n)
+{
+  int i=1;
+  int keepGoing=1;
+  struct __comp_state* inst_ptr=0;
+  inst_ptr=__comp_first_inst;
+  while(keepGoing)
+  {
+    if(i==n) return inst_ptr;
+    if(inst_ptr==__comp_last_inst) return 0;
+    if(inst_ptr->_next==0) return 0;
+    inst_ptr=inst_ptr->_next;
+    i=i+1;
+  } 
+  return 0;
+}
+
+/*
+**  Returns: -1 if empty
+**           a number >=0 if not empty.
+*/
+EXPORT_SYMBOL_GPL(hal_ringbuff_full_count);
+int hal_ringbuff_full_count(int bhandle)
+{
+  int i;
+  int o;
+  int n; // number of things in the buffer
+  struct __comp_state* __comp_inst;
+  __comp_inst=get_inst_ptr(bhandle);
+  if (__comp_inst==0) return -1; // there is no sane thing to do when the pointer is null...
+  o=pptr;
+  i=cptr;
+  n=readable_slots(i, o);
+  return n;
+}
+
+/**  Returns: -1 if empty
+**           a number >=0 if not empty.
+*/
+EXPORT_SYMBOL_GPL(hal_ringbuff_free_count);
+int hal_ringbuff_free_count(int bhandle)
+{
+  int i;
+  int o;
+  int n; // number of things in the buffer
+  struct __comp_state* __comp_inst;
+  __comp_inst=get_inst_ptr(bhandle);
+  if (__comp_inst==0) return 0; // there is no sane thing to do when the pointer is null...
+  i=pptr;
+  o=cptr;
+  n=writeable_slots(i, o);
+  return n;
+}
+
+/**  Returns: -1 if empty
+**           a number >=0 if not empty.
+*/
+EXPORT_SYMBOL_GPL(hal_ringbuff_get);
+int hal_ringbuff_get(int bhandle)
+{ 
+  int i;
+  int o;
+  int n; // number of things in the buffer
+  struct __comp_state* __comp_inst;
+  __comp_inst=get_inst_ptr(bhandle);
+  if (__comp_inst==0) return 0; // there is no sane thing to do when the pointer is null...
+  i=pptr;
+  o=cptr;
+  n=readable_slots(i, o);
+  if (n>0) { // There is data to put
+    // output pointer points at the last record written out
+    o=ringbuff_index_ptr(o);
+    cptr=o;
+    return thering[o];
+  } 
+  else return -1;
+}
+
+
+/**  Returns: -1 if full
+**           a number >=0 if not empty.
+*/
+EXPORT_SYMBOL_GPL(hal_ringbuff_put);
+int hal_ringbuff_put(int bhandle, unsigned char byte)
+{ 
+  struct __comp_state* __comp_inst;
+  int i;
+  int o;
+  int n; // number of things in the buffer
+  __comp_inst=get_inst_ptr(bhandle);
+  if (__comp_inst==0) return 0; // there is no sane thing to do when the pointer is null...
+  // because we are SETTING __comp_inst, the macros that get defined automatically will
+  // map our pointers to the right instances like magic.
+  o=cptr;
+  i=pptr;
+  n=writeable_slots(i, o);
+  if (n>0) { // There is space to write to the buffer 
+    // pointer points to the first empty slot 
+    thering[i]=byte;
+    i=ringbuff_index_ptr(i);
+    pptr=i;
+    return 1;
+  } 
+  else return -1;
+}
+
+int readable_slots(int i, int o)
+{
+  if(i<o) return i-o+SPIBUFFSZ-1;  
+  else return i-o-1;
+}
+
+int writeable_slots(int i, int o)
+{
+  if(i<o) return o-i;  
+  else return SPIBUFFSZ+o-i;
+}
+
+int ringbuff_index_ptr(int q)
+{
+  q++;
+  if (q>=SPIBUFFSZ) q=0;
+  return q;
+}
+

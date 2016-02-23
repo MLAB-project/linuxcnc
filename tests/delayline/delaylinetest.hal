@@ -1,0 +1,18 @@
+# components
+loadrt threads name2=servo-thread period2=1000000 
+loadrt siggen 
+loadrt delayline
+# pin aliases
+# param aliases
+# parameter values
+delayline.0.numDelayCycles = 1
+siggen.0.frequency = 100
+# signals
+# nets
+net input siggen.0.sine => delayline.0.input
+net output delayline.0.output 
+
+# realtime thread/function links
+addf siggen.0.update servo-thread
+addf delayline.0 servo-thread
+

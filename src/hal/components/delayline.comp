@@ -1,0 +1,45 @@
+component delayline "A shift register delay line";
+author "Matt Wortley";
+license "GPLv2 or later";
+description """This component accepts a float on its input pin.  The float goes into a shift register that is indexed every time the thread is processed.  After numDelayCycles (parameter) have passed since the data was put into the shift register, the sample is placed on the output pin (float).  0 through 31 cycles are the valid range of delays.  The component gracefully handles changing the numDelayCycles dynamically during program execution by duplicating the input values to fill in the ring buffer if more delay is added, or skipping values if the delay is shortened.  This is not to say there will not be a glitch when it is done, but that the glitches should immediate and limited to valid values the register is seeing or has seen at the input recently, instead of just skipping elements in the ring and having some abandoned data show up at the output later unexpectedly.  The maximum delay can be changed in the source to any arbitrary length if needed.  """;
+
+pin in float input "New number to shove into the shift register.";
+pin out float output "A number pushed in n slots ago.";
+
+param rw unsigned numDelayCycles = 1 "How much delay would you like (cycles).";
+
+variable unsigned oldNumDelayCycles = 0;
+variable float floatRing [32];
+variable int inp = 0 ; // The input slot pointer
+variable int outp = 0; // the ouput slot pointer
+
+function _ nofp;
+;;
+
+#define NSLOTS 32;
+
+
+FUNCTION(_) {
+  if (numDelayCycles < 0) numDelayCycles = 0;
+  if (numDelayCycles > (32 -1)) numDelayCycles = 31;
+
+  // If the number of delay cycles gets decreased, just back the pointier off,
+  // everything will be fine if we re-use a memory slot
+  if (oldNumDelayCycles>numDelayCycles) oldNumDelayCycles = numDelayCycles;
+
+  // Put the data in the number of cycles ahead of where we will read it in the
+  // array. The loop automatically accounts for someone increasing the 
+  // number of delay cycles by filling more slots in with valid data.
+  for(;oldNumDelayCycles<=numDelayCycles;oldNumDelayCycles++) 
+  {
+    inp = outp + oldNumDelayCycles; 
+    inp = inp%NSLOTS; // Wraps automatically
+    floatRing[inp] = input;
+  }
+  output = floatRing[outp];
+  outp++;
+  outp=outp%NSLOTS; // Automatically wraps 
+ 
+} // End function
+
+

@@ -1,0 +1,47 @@
+component ringtest "test a ring buffer";
+author "Matt Wortley";
+license "GPLv2 or later";
+description """This component exists only to test ringbuff.comp""";
+
+
+pin in unsigned in_handle "Connect me to a bhandle on a ringbuff component";
+pin in unsigned out_handle "Connect me to a bhandle on a ringbuff component";
+pin out signed freeslots "How many free slots are reported in the buffer";
+pin out signed fullslots "How many full slots are reported by the buffer";
+
+pin io signed inbyte "number 0x00-0xFF.  Turns to a -1 when it is sent";
+
+variable unsigned state=0; // state of the buffer machine
+
+function _ nofp;
+;;
+
+#ifndef __RINGBUFF_H
+#define __RINGBUFF_H
+int hal_ringbuff_put(int bhandle, unsigned char byte);
+int hal_ringbuff_get(int bhandle);
+int hal_ringbuff_free_count(int bhandle);
+int hal_ringbuff_full_count(int bhandle);
+#endif
+
+FUNCTION(_) {
+  switch(state) {
+    // Do nothing until the handles are initialized
+    case 0: // Unitialized 
+      if(in_handle!=0) {
+        if(out_handle!=0) state=10;
+      }
+      break;
+    case 10: // watch for input changes and send to buffer
+      if(inbyte!=-1) {
+        hal_ringbuff_put(out_handle, inbyte);
+        inbyte=-1;
+      }
+      break;
+    default:
+      break;
+  }
+  freeslots=hal_ringbuff_free_count(out_handle);
+} // End function
+
+
