@@ -56,6 +56,10 @@
 #include <sys/shm.h>		/* shmget() */
 #include <string.h>
 
+static int rtapi_clock_nanosleep(clockid_t clock_id, int flags,
+        const struct timespec *prequest, struct timespec *remain,
+        const struct timespec *pnow);
+
 int WithRoot::level;
 
 namespace
@@ -611,9 +615,6 @@ static void configure_memory()
     free(buf);
 }
 
-extern "C"
-int rtapi_is_realtime();
-
 static int harden_rt()
 {
     if(!rtapi_is_realtime()) return -EINVAL;
@@ -936,7 +937,7 @@ void Posix::wait() {
     }
     else
     {
-        int res = clock_nanosleep(RTAPI_CLOCK, TIMER_ABSTIME, &task->nextstart, NULL);
+        int res = rtapi_clock_nanosleep(RTAPI_CLOCK, TIMER_ABSTIME, &task->nextstart, nullptr, &now);
         if(res < 0) perror("clock_nanosleep");
     }
     if(do_thread_lock)

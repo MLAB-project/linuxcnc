@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 # -*- coding:UTF-8 -*-
 """
     A try of a new GUI for LinuxCNC based on gladevcp and Python
@@ -25,6 +25,7 @@
     Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 """
+
 import traceback          # needed to launch traceback errors
 import hal                # base hal class to react to hal signals
 import hal_glib           # needed to make our own hal pins
@@ -44,9 +45,7 @@ import gettext            # to extract the strings to be translated
 
 from gladevcp.gladebuilder import GladeBuilder
 
-from time import strftime   # needed to add a time stamp with alarm entries
-from time import localtime  # needed to add a time stamp with alarm entries
-from ImageChops import difference
+from time import strftime   # needed for the clock in the GUI
 
 # Throws up a dialog with debug info when an error is encountered
 def excepthook( exc_type, exc_obj, exc_tb ):
@@ -60,7 +59,7 @@ def excepthook( exc_type, exc_obj, exc_tb ):
     m = gtk.MessageDialog( w,
                           gtk.DIALOG_MODAL | gtk.DIALOG_DESTROY_WITH_PARENT,
                           gtk.MESSAGE_ERROR, gtk.BUTTONS_OK,
-                          ( "Found an error!\nThe following information may be useful in troubleshooting:\n\n" )
+                          ( "Found an error!\nThe following information may be useful for troubleshooting:\n\n" )
                           + "".join( lines ) )
     m.show()
     m.run()
@@ -88,7 +87,7 @@ if debug:
 
 # constants
 #         # gmoccapy  #"
-_RELEASE = " 1.5.6.1"
+_RELEASE = " 1.5.6.3"
 _INCH = 0                         # imperial units are active
 _MM = 1                           # metric units are active
 _TEMPDIR = tempfile.gettempdir()  # Now we know where the tempdir is, usualy /tmp
@@ -141,6 +140,13 @@ class gmoccapy( object ):
         self.halcomp = hal.component( "gmoccapy" )
         self.command = linuxcnc.command()
         self.stat = linuxcnc.stat()
+
+        self.command.teleop_enable(1)
+        self.command.wait_complete()
+        self.stat.poll()
+        if self.stat.kinematics_type != linuxcnc.KINEMATICS_IDENTITY:
+            raise SystemExit, "\n*** gmoccapy: Only KINEMATICS_IDENTITY is supported\n"
+
         self.error_channel = linuxcnc.error_channel()
         # initial poll, so all is up to date
         self.stat.poll()
@@ -669,6 +675,12 @@ class gmoccapy( object ):
         # the time between calls to the function, in milliseconds
         gobject.timeout_add( 100, self._periodic )  # time between calls to the function, in milliseconds
 
+    def set_motion_mode(self):
+        self.stat.poll()
+        if self.stat.motion_mode != linuxcnc.TRAJ_MODE_TELEOP:
+            self.command.teleop_enable(1)
+            self.command.wait_complete()
+
     def _get_axis_list( self ):
         temp = self.get_ini_info.get_coordinates()
         self.axis_list = []
@@ -867,7 +879,7 @@ class gmoccapy( object ):
         self.jog_increments = self.get_ini_info.get_increments()
         if len( self.jog_increments ) > 10:
             print( _( "**** GMOCCAPY INFO ****" ) )
-            print( _( "**** To many increments given in INI File for this screen ****" ) )
+            print( _( "**** Too many increments given in INI File for this screen ****" ) )
             print( _( "**** Only the first 10 will be reachable through this screen ****" ) )
             # we shorten the incrementlist to 10 (first is default = 0)
             self.jog_increments = self.jog_increments[0:11]
@@ -932,7 +944,7 @@ class gmoccapy( object ):
         tab_names, tab_location, tab_cmd = self.get_ini_info.get_embedded_tabs()
         if not tab_names:
             print ( _( "**** GMOCCAPY INFO ****" ) )
-            print ( _( "**** Invalid embeded tab configuration ****" ) )
+            print ( _( "**** Invalid embedded tab configuration ****" ) )
             print ( _( "**** No tabs will be added! ****" ) )
             return
 
@@ -1056,6 +1068,9 @@ class gmoccapy( object ):
         self.widgets.gremlin.set_property( "metric_units", int( self.stat.linear_units ) )
         self.widgets.gremlin.set_property( "mouse_btn_mode", self.prefs.getpref( "mouse_btn_mode", 4, int ) )
         self.widgets.gremlin.set_property( "use_commanded", not self.dro_actual)
+        self.widgets.gremlin.init_glcanondraw(
+             trajcoordinates=self.get_ini_info.get_trajcoordinates(),
+             kinstype=self.get_ini_info.get_kinstype())
 
     # init the function to hide the cursor
     def _init_hide_cursor( self ):
@@ -1107,7 +1122,7 @@ class gmoccapy( object ):
             self.onboard = True
         except Exception, e:
             print ( _( "**** GMOCCAPY ERROR ****" ) )
-            print ( _( "**** Error with launching virtual keyboard," ) )
+            print ( _( "**** Error launching virtual keyboard," ) )
             print ( _( "**** is onboard or matchbox-keyboard installed? ****" ) )
             traceback.print_exc()
             self._no_virt_keyboard()
@@ -1184,9 +1199,6 @@ class gmoccapy( object ):
     # Icon file selection stuff
     def _init_IconFileSelection( self ):
         self.widgets.IconFileSelection1.set_property( "start_dir", self.get_ini_info.get_program_prefix() )
-
-        iconsize = 48
-        self.widgets.IconFileSelection1.set_property( "icon_size", iconsize )
 
         file_ext = self.get_ini_info.get_file_ext()
         filetypes = ""
@@ -1443,7 +1455,7 @@ class gmoccapy( object ):
             self.stat.poll()
             if self.stat.task_state != linuxcnc.STATE_ON:
                 widget.set_active( False )
-                self._show_error( ( 11, _( "ERROR : Could not switch the machine on, is limit switch aktivated?" ) ) )
+                self._show_error( ( 11, _( "ERROR : Could not switch the machine on, is limit switch activated?" ) ) )
                 self._update_widgets( False )
                 return
             self._update_widgets( True )
@@ -1653,7 +1665,7 @@ class gmoccapy( object ):
             self.widgets.ntb_jog.set_current_page( 0 )
             return
         # if MDI button is not sensitive, we are not ready for MDI commands
-        # so we have to aboart external commands and get back to manual mode
+        # so we have to abort external commands and get back to manual mode
         # This will hapen mostly, if we are in settings mode, as we do disable the mode button
         if not self.widgets.rbt_mdi.get_sensitive():
             self.command.abort()
@@ -1674,7 +1686,7 @@ class gmoccapy( object ):
 
     def on_hal_status_mode_auto( self, widget ):
         # if Auto button is not sensitive, we are not ready for AUTO commands
-        # so we have to aboart external commands and get back to manual mode
+        # so we have to abort external commands and get back to manual mode
         # This will hapen mostly, if we are in settings mode, as we do disable the mode button
         if not self.widgets.rbt_auto.get_sensitive():
             self.command.abort()
@@ -1908,7 +1920,7 @@ class gmoccapy( object ):
         # Only in manual mode jogging with keyboard is allowed
         # in this case we do not return true, otherwise entering code in MDI history
         # and the integrated editor will not work
-        # we also check if we are in settings or terminal or alarm page
+        # we also check if we are in settings or user page
         if self.stat.task_mode != linuxcnc.MODE_MANUAL or not self.widgets.ntb_main.get_current_page() == 0:
             return
 
@@ -2584,10 +2596,11 @@ class gmoccapy( object ):
         else:
             direction = -1
 
+        self.set_motion_mode()
         if self.distance <> 0:  # incremental jogging
-            self.command.jog( linuxcnc.JOG_INCREMENT, axisnumber, direction * velocity, self.distance )
+            self.command.jog( linuxcnc.JOG_INCREMENT, 0, axisnumber, direction * velocity, self.distance )
         else:  # continuous jogging
-            self.command.jog( linuxcnc.JOG_CONTINUOUS, axisnumber, direction * velocity )
+            self.command.jog( linuxcnc.JOG_CONTINUOUS, 0, axisnumber, direction * velocity )
 
     def on_btn_jog_released( self, widget, data = None ):
         # only in manual mode we will allow jogging the axis at this development state
@@ -2605,7 +2618,8 @@ class gmoccapy( object ):
         if self.distance <> 0:
             pass
         else:
-            self.command.jog( linuxcnc.JOG_STOP, axis )
+            self.set_motion_mode()
+            self.command.jog( linuxcnc.JOG_STOP, 0,  axis )
 
     # use the current loaded file to be loaded on start up
     def on_btn_use_current_clicked( self, widget, data = None ):
@@ -2660,7 +2674,7 @@ class gmoccapy( object ):
                 dialogs.warning_dialog( self, _( "Just to warn you" ), message )
                 self.widgets.tbtn_setup.set_active( False )
         else:
-            # check witch button should be sensitive, depending on the state of the machine
+            # check which button should be sensitive, depending on the state of the machine
             if self.stat.task_state == linuxcnc.STATE_ESTOP:
                 # estoped no mode availible
                 self.widgets.rbt_manual.set_sensitive( False )
@@ -2698,12 +2712,16 @@ class gmoccapy( object ):
         self.widgets.ntb_button.set_current_page( 3 )
 
     def on_btn_home_all_clicked( self, widget, data = None ):
+        self.command.teleop_enable(0)
+        self.command.wait_complete()
         # home -1 means all
         self.command.home( -1 )
 
     def on_btn_unhome_all_clicked( self, widget, data = None ):
         self.all_homed = False
         # -1 for all
+        self.command.teleop_enable(0)
+        self.command.wait_complete()
         self.command.unhome( -1 )
 
     def on_btn_home_selected_clicked( self, widget, data = None ):

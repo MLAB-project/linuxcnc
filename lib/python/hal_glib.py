@@ -124,7 +124,11 @@ class _GStat(gobject.GObject):
         self.old['state'] = self.stat.task_state
         self.old['mode']  = self.stat.task_mode
         self.old['interp']= self.stat.interp_state
-        self.old['file']  = self.stat.file
+        # Only update file if call_level is 0, which
+        # means we are not executing a subroutine/remap
+        # This avoids emitting signals for bogus file names below 
+        if self.stat.call_level == 0:
+            self.old['file']  = self.stat.file
         self.old['line']  = self.stat.motion_line
         self.old['homed'] = self.stat.homed
         self.old['tool-in-spindle'] = self.stat.tool_in_spindle
@@ -165,7 +169,6 @@ class _GStat(gobject.GObject):
         interp_new = self.old['interp']
         if interp_new != interp_old:
             if not interp_old or interp_old == linuxcnc.INTERP_IDLE:
-                print "Emit", "interp-run"
                 self.emit('interp-run')
             self.emit(self.INTERP[interp_new])
 
@@ -174,14 +177,21 @@ class _GStat(gobject.GObject):
         if file_new != file_old:
             # if interpreter is reading or waiting, the new file
             # is a remap procedure, with the following test we
-            # do avoid that a signal is emited in that case, causing 
-            # a reload of the preview and sourceview widgets
+            # partly avoid emitting a signal in that case, which would cause 
+            # a reload of the preview and sourceview widgets.  A signal could
+            # still be emitted if aborting a program shortly after it ran an
+            # external file subroutine, but that is fixed by not updating the
+            # file name if call_level != 0 in the merge() function above.
             if self.stat.interp_state == linuxcnc.INTERP_IDLE:
                 self.emit('file-loaded', file_new)
 
         #ToDo : Find a way to avoid signal when the line changed due to 
         #       a remap procedure, because the signal do highlight a wrong
         #       line in the code
+        # I think this might be fixed somewhere, because I do not see bogus line changed signals
+        # when running an external file subroutine.  I tried making it not record line numbers when
+        # the call level is non-zero above, but then I was not getting nearly all the signals I should
+        # Moses McKnight
         line_old = old.get('line', None)
         line_new = self.old['line']
         if line_new != line_old:
@@ -200,19 +210,19 @@ class _GStat(gobject.GObject):
         homed_old = old.get('homed', None)
         homed_new = self.old['homed']
         if homed_new != homed_old:
-            axis_count = count = 0
+            axis_count = homed_count = 0
             unhomed = homed = ""
             for i,h in enumerate(homed_new):
                 if h:
-                    count +=1
+                    if self.stat.axis_mask & (1<<i): homed_count +=1
                     homed += str(i)
                 if self.stat.axis_mask & (1<<i) == 0: continue
                 axis_count += 1
                 if not h:
                     unhomed += str(i)
-            if count:
+            if homed_count:
                 self.emit('homed',homed)
-            if count == axis_count:
+            if homed_count == axis_count:
                 self.emit('all-homed')
             else:
                 self.emit('not-all-homed',unhomed)

@@ -119,7 +119,7 @@ static char savedError[LINELEN+1];
 
 Interp::Interp()
     : log_file(stderr),
-      _setup(setup_struct())
+    _setup{}
 {
     _setup.init_once = 1;  
     init_named_parameters();  // need this before Python init.
@@ -161,6 +161,10 @@ Interp::Interp()
     }
 }
 
+InterpBase *makeInterp()
+{
+    return new Interp;
+}
 
 Interp::~Interp() {
 
@@ -820,9 +824,9 @@ int Interp::init()
   _setup.b_axis_wrapped = 0;
   _setup.c_axis_wrapped = 0;
   _setup.random_toolchanger = 0;
-  _setup.a_indexer = 0;
-  _setup.b_indexer = 0;
-  _setup.c_indexer = 0;
+  _setup.a_indexer_jnum = -1; // -1 means not used
+  _setup.b_indexer_jnum = -1; // -1 means not used
+  _setup.c_indexer_jnum = -1; // -1 means not used
   _setup.return_value = 0;
   _setup.value_returned = 0;
   _setup.remap_level = 0; // remapped blocks stack index
@@ -845,15 +849,21 @@ int Interp::init()
           inifile.Find(&_setup.tool_change_at_g30, "TOOL_CHANGE_AT_G30", "EMCIO");
           inifile.Find(&_setup.tool_change_quill_up, "TOOL_CHANGE_QUILL_UP", "EMCIO");
           inifile.Find(&_setup.tool_change_with_spindle_on, "TOOL_CHANGE_WITH_SPINDLE_ON", "EMCIO");
-          inifile.Find(&_setup.a_axis_wrapped, "WRAPPED_ROTARY", "AXIS_3");
-          inifile.Find(&_setup.b_axis_wrapped, "WRAPPED_ROTARY", "AXIS_4");
-          inifile.Find(&_setup.c_axis_wrapped, "WRAPPED_ROTARY", "AXIS_5");
+          inifile.Find(&_setup.a_axis_wrapped, "WRAPPED_ROTARY", "AXIS_A");
+          inifile.Find(&_setup.b_axis_wrapped, "WRAPPED_ROTARY", "AXIS_B");
+          inifile.Find(&_setup.c_axis_wrapped, "WRAPPED_ROTARY", "AXIS_C");
           inifile.Find(&_setup.random_toolchanger, "RANDOM_TOOLCHANGER", "EMCIO");
           inifile.Find(&_setup.feature_set, "FEATURES", "RS274NGC");
 
-          inifile.Find(&_setup.a_indexer, "LOCKING_INDEXER", "AXIS_3");
-          inifile.Find(&_setup.b_indexer, "LOCKING_INDEXER", "AXIS_4");
-          inifile.Find(&_setup.c_indexer, "LOCKING_INDEXER", "AXIS_5");
+          if (NULL != (inistring =inifile.Find("LOCKING_INDEXER_JOINT", "AXIS_A"))) {
+              _setup.a_indexer_jnum = atol(inistring);
+          }
+          if (NULL != (inistring =inifile.Find("LOCKING_INDEXER_JOINT", "AXIS_B"))) {
+              _setup.b_indexer_jnum = atol(inistring);
+          }
+          if (NULL != (inistring =inifile.Find("LOCKING_INDEXER_JOINT", "AXIS_C"))) {
+              _setup.c_indexer_jnum = atol(inistring);
+          }
           inifile.Find(&_setup.orient_offset, "ORIENT_OFFSET", "RS274NGC");
 
           inifile.Find(&_setup.debugmask, "DEBUG", "EMC");
@@ -2118,6 +2128,13 @@ char * Interp::error_text(int error_code,        //!< code number of error
 
         return error_text;
     }
+    else if (error_code == INTERP_FILE_NOT_OPEN)
+    {
+        strncpy(error_text, "File not open", max_size);
+        error_text[max_size-1] = 0;
+
+        return error_text;
+    }
 
     error_text[0] = 0;
     return error_text;
@@ -2447,6 +2464,106 @@ int Interp::leave_remap(void)
     return INTERP_OK;
 }
 
+
+void Interp::program_end_cleanup(setup_pointer settings) {
+    int index;
+
+    settings->current_x += settings->origin_offset_x;
+    settings->current_y += settings->origin_offset_y;
+    settings->current_z += settings->origin_offset_z;
+    settings->AA_current += settings->AA_origin_offset;
+    settings->BB_current += settings->BB_origin_offset;
+    settings->CC_current += settings->CC_origin_offset;
+    settings->u_current += settings->u_origin_offset;
+    settings->v_current += settings->v_origin_offset;
+    settings->w_current += settings->w_origin_offset;
+    rotate(&settings->current_x, &settings->current_y, settings->rotation_xy);
+
+    settings->origin_index = 1;
+    settings->parameters[5220] = 1.0;
+    settings->origin_offset_x = USER_TO_PROGRAM_LEN(settings->parameters[5221]);
+    settings->origin_offset_y = USER_TO_PROGRAM_LEN(settings->parameters[5222]);
+    settings->origin_offset_z = USER_TO_PROGRAM_LEN(settings->parameters[5223]);
+    settings->AA_origin_offset = USER_TO_PROGRAM_ANG(settings->parameters[5224]);
+    settings->BB_origin_offset = USER_TO_PROGRAM_ANG(settings->parameters[5225]);
+    settings->CC_origin_offset = USER_TO_PROGRAM_ANG(settings->parameters[5226]);
+    settings->u_origin_offset = USER_TO_PROGRAM_LEN(settings->parameters[5227]);
+    settings->v_origin_offset = USER_TO_PROGRAM_LEN(settings->parameters[5228]);
+    settings->w_origin_offset = USER_TO_PROGRAM_LEN(settings->parameters[5229]);
+    settings->rotation_xy = settings->parameters[5230];
+
+    rotate(&settings->current_x, &settings->current_y, -settings->rotation_xy);
+    settings->current_x -= settings->origin_offset_x;
+    settings->current_y -= settings->origin_offset_y;
+    settings->current_z -= settings->origin_offset_z;
+    settings->AA_current -= settings->AA_origin_offset;
+    settings->BB_current -= settings->BB_origin_offset;
+    settings->CC_current -= settings->CC_origin_offset;
+    settings->u_current -= settings->u_origin_offset;
+    settings->v_current -= settings->v_origin_offset;
+    settings->w_current -= settings->w_origin_offset;
+
+    SET_G5X_OFFSET(settings->origin_index,
+                   settings->origin_offset_x,
+                   settings->origin_offset_y,
+                   settings->origin_offset_z,
+                   settings->AA_origin_offset,
+                   settings->BB_origin_offset,
+                   settings->CC_origin_offset,
+                   settings->u_origin_offset,
+                   settings->v_origin_offset,
+                   settings->w_origin_offset);
+    SET_XY_ROTATION(settings->rotation_xy);
+
+    if (settings->plane != CANON_PLANE_XY) {
+        SELECT_PLANE(CANON_PLANE_XY);
+        settings->plane = CANON_PLANE_XY;
+    }
+
+    settings->distance_mode = MODE_ABSOLUTE;
+
+    settings->feed_mode = UNITS_PER_MINUTE;
+    SET_FEED_MODE(0);
+    settings->feed_rate = 0;
+    SET_FEED_RATE(0);
+
+    if (!settings->feed_override) {
+        ENABLE_FEED_OVERRIDE();
+        settings->feed_override = true;
+    }
+    if (!settings->speed_override) {
+        ENABLE_SPEED_OVERRIDE();
+        settings->speed_override = true;
+    }
+
+    settings->cutter_comp_side = false;
+    settings->cutter_comp_firstmove = true;
+
+    STOP_SPINDLE_TURNING();
+    settings->spindle_turning = CANON_STOPPED;
+
+    /* turn off FPR */
+    SET_SPINDLE_MODE(0);
+
+    settings->motion_mode = G_1;
+
+    if (settings->mist) {
+        MIST_OFF();
+        settings->mist = false;
+    }
+    if (settings->flood) {
+        FLOOD_OFF();
+        settings->flood = false;
+    }
+
+/*10*/
+    if (settings->disable_g92_persistence)
+	// Clear G92/G52 offset
+	for (index=5210; index<=5219; index++)
+	    settings->parameters[index] = 0;
+}
+
+
 int Interp::on_abort(int reason, const char *message)
 {
     logDebug("on_abort reason=%d message='%s'", reason, message);
@@ -2459,6 +2576,9 @@ int Interp::on_abort(int reason, const char *message)
     _setup.toolchange_flag = false;
     _setup.probe_flag = false;
     _setup.input_flag = false;
+
+    logDebug("interp: %s simulating M30\n", __func__);
+    program_end_cleanup(&_setup);
 
     if (_setup.on_abort_command == NULL)
 	return -1;
@@ -2531,7 +2651,7 @@ const char *strstore(const char *s)
     if (s == NULL)
         throw invalid_argument("strstore(): NULL argument");
     pair< set<string>::iterator, bool > pair = stringtable.insert(s);
-    return string(*pair.first).c_str();
+    return pair.first->c_str();
 }
 
 context_struct::context_struct()
